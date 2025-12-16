@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MDRRMO IEC Admin</title>
+<style>
+body { font-family:'Segoe UI',sans-serif; background:#eef2f7; padding:20px; }
+header { text-align:center; margin-bottom:30px; }
+header h1 { color:#005f87; }
+form, .file-list { max-width:800px; margin:auto; background:#fff; padding:20px; border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,0.1); margin-bottom:30px;}
+form div { margin-bottom:15px; }
+label { display:block; margin-bottom:5px; font-weight:600; color:#005f87; }
+input[type=file], select, input[type=text], textarea { width:100%; padding:8px; border-radius:6px; border:1px solid #ccc; }
+button { padding:10px 15px; background:#0077b6; color:#fff; border:none; border-radius:6px; cursor:pointer; transition:0.3s; margin-right:5px; }
+button:hover { background:#005f87; }
+.preview { border:1px solid #ddd; padding:10px; border-radius:6px; background:#fafafa; margin-top:10px; max-height:200px; overflow:auto;}
+ul { list-style:none; padding:0; }
+li { display:flex; justify-content:space-between; align-items:center; padding:10px; border-bottom:1px solid #ddd; }
+.file-info { display:flex; flex-direction:column; }
+.file-info span { font-weight:600; color:#005f87; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>MDRRMO IEC Admin</h1>
+  <p>Upload, Preview, and Manage IEC Files</p>
+</header>
+
+<form id="uploadForm">
+  <div>
+    <label for="file">Choose File</label>
+    <input type="file" id="file" name="file" required>
+  </div>
+  <div>
+    <label for="category">Select Category</label>
+    <select id="category" name="category" required>
+      <option value="solid-waste">Solid Waste</option>
+      <option value="hazards">Hazards</option>
+      <option value="others">Others</option>
+    </select>
+  </div>
+  <div>
+    <label for="description">TTS Description (for images/videos)</label>
+    <textarea id="description" placeholder="Enter description for TTS (optional)"></textarea>
+  </div>
+  <div class="preview" id="preview">File preview will appear here</div>
+  <button type="submit">Upload</button>
+  <div id="status"></div>
+</form>
+
+<section class="file-list">
+<h2>Uploaded Files</h2>
+<ul id="fileList"></ul>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.8.162/pdf.min.js"></script>
+<script>
+const form = document.getElementById('uploadForm');
+const status = document.getElementById('status');
+const fileList = document.getElementById('fileList');
+const preview = document.getElementById('preview');
+const fileInput = document.getElementById('file');
+const descriptionInput = document.getElementById('description');
+
+let selectedFile;
+
+fileInput.addEventListener('change', () => {
+  const file = fileInput.files[0];
+  selectedFile = file;
+  preview.innerHTML = '';
+  descriptionInput.value = '';
+  if(!file) return;
+
+  const reader = new FileReader();
+
+  if(file.type.startsWith('image/')){
+    reader.onload = e => {
+      const img = document.createElement('img');
+      img.src = e.target.result;
+      img.style.maxWidth='100%';
+      preview.appendChild(img);
+    };
+    reader.readAsDataURL(file);
+  }
+  else if(file.type.startsWith('video/')){
+    reader.onload = e => {
+      const vid = document.createElement('video');
+      vid.src = e.target.result;
+      vid.controls = true;
+      vid.style.maxWidth='100%';
+      preview.appendChild(vid);
+    };
+    reader.readAsDataURL(file);
+  }
+  else if(file.type === 'application/pdf'){
+    reader.onload = e => {
+      const iframe = document.createElement('iframe');
+      iframe.src = e.target.result;
+      iframe.style.width='100%';
+      iframe.style.height='180px';
+      preview.appendChild(iframe);
+    };
+    reader.readAsDataURL(file);
+  }
+  else if(file.type === 'text/plain'){
+    reader.onload = e => {
+      const pre = document.createElement('pre');
+      pre.textContent = e.target.result;
+      preview.appendChild(pre);
+    };
+    reader.readAsText(file);
+  } else {
+    preview.textContent='Preview not available for this file type';
+  }
+});
+
+async function loadFiles(){
+  const res = await fetch('http://localhost:3000/files');
+  const files = await res.json();
+  fileList.innerHTML='';
+  files.forEach(f=>{
+    const li = document.createElement('li');
+    const info = document.createElement('div'); info.className='file-info';
+    info.innerHTML=`<span>${f.name}</span>Category: ${f.category}`;
+    const delBtn=document.createElement('button'); delBtn.textContent='Delete';
+    delBtn.onclick=async ()=>{
+      if(confirm(`Delete ${f.name}?`)){
+        await fetch('http://localhost:3000/delete',{
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({path:f.path})
+        });
+        loadFiles();
+      }
+    };
+    li.appendChild(info);
+    li.appendChild(delBtn);
+    fileList.appendChild(li);
+  });
+}
+
+form.addEventListener('submit', async e=>{
+  e.preventDefault();
+  if(!selectedFile) return;
+
+  const formData = new FormData();
+  formData.append('file', selectedFile);
+  formData.append('category', document.getElementById('category').value);
+  formData.append('description', descriptionInput.value);
+
+  status.textContent='Uploading...';
+  const res = await fetch('http://localhost:3000/upload', {method:'POST', body:formData});
+  const data = await res.json();
+  if(data.success){ status.textContent='Upload Successful'; form.reset(); preview.innerHTML=''; loadFiles(); }
+  else status.textContent='Upload Failed';
+});
+
+loadFiles();
+</script>
+</body>
+</html>

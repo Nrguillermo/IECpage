@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MDRRMO IEC Platform</title>
+
+<!-- CSS -->
+<style>
+body { font-family: 'Segoe UI', sans-serif; margin:0; background:#eef2f7; color:#333; }
+header { background:#005f87; color:#fff; padding:20px; text-align:center; }
+header h1 { margin:0; }
+main { max-width:1100px; margin:20px auto; padding:0 15px; }
+
+#filters { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:15px; }
+select { padding:8px 12px; border-radius:6px; border:1px solid #ccc; }
+
+#iecFiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:15px; list-style:none; padding:0; }
+#iecFiles li { background:#fff; border-radius:12px; box-shadow:0 4px 10px rgba(0,0,0,.08); padding:12px; display:flex; flex-direction:column; }
+.file-title { font-weight:600; color:#005f87; margin-bottom:10px; }
+.file-buttons { margin-top:auto; display:flex; gap:6px; flex-wrap:wrap; }
+button,a { padding:6px 10px; font-size:.8em; border-radius:6px; border:none; background:#0077b6; color:#fff; cursor:pointer; text-decoration:none; }
+button:hover,a:hover { background:#005f87; }
+
+#viewerModal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.7); z-index:999; justify-content:center; align-items:center; }
+#viewerBox { background:#fff; border-radius:12px; max-width:95%; max-height:90%; width:900px; display:flex; flex-direction:column; }
+#viewerHeader { padding:10px; border-bottom:1px solid #ddd; display:flex; justify-content:space-between; }
+#viewerContent { padding:10px; overflow:auto; text-align:center; }
+#viewerContent iframe, #viewerContent video, #viewerContent img { max-width:100%; max-height:70vh; }
+#textLayer { margin:10px; background:#f8f9fa; border-radius:6px; padding:10px; font-size:0.9em; max-height:200px; overflow:auto; }
+#textLayer em { color:#555; }
+#viewerControls { padding:10px; display:flex; gap:10px; justify-content:center; flex-wrap:wrap; }
+
+@media (max-width:600px){ header h1{ font-size:1.4em; } }
+</style>
+
+<!-- PDF.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.8.162/pdf.min.js"></script>
+<!-- Tesseract.js for OCR -->
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@4.0.2/dist/tesseract.min.js"></script>
+
+</head>
+<body>
+
+<header>
+  <h1>MDRRMO IEC Platform</h1>
+  <p>Original IEC Files with Selective Filipino Voice-Over</p>
+</header>
+
+<main>
+<div id="filters">
+  <select id="typeFilter">
+    <option value="all">All Types</option>
+    <option value="image">Images</option>
+    <option value="video">Videos</option>
+    <option value="pdf">PDF</option>
+    <option value="text">Text</option>
+  </select>
+  <select id="categoryFilter">
+    <option value="all">All Categories</option>
+    <option value="solid-waste">Solid Waste</option>
+    <option value="hazards">Hazards</option>
+    <option value="others">Others</option>
+  </select>
+</div>
+
+<ul id="iecFiles"></ul>
+</main>
+
+<!-- Viewer Modal -->
+<div id="viewerModal">
+  <div id="viewerBox">
+    <div id="viewerHeader">
+      <strong>IEC Viewer</strong>
+      <button onclick="closeViewer()">×</button>
+    </div>
+    <div id="viewerContent"></div>
+    <div id="textLayer"><em>👉 I-highlight ang bahagi ng teksto na nais pakinggan.</em></div>
+    <div id="viewerControls">
+      <button onclick="readSelected()">Read Selected</button>
+      <button onclick="readAll()">Read All</button>
+      <button onclick="stopTTS()">Stop</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ===== GLOBALS ===== */
+const synth = window.speechSynthesis;
+let voices = [], allFiles = [], extractedText = '';
+
+speechSynthesis.onvoiceschanged = () => { voices = synth.getVoices(); };
+
+/* ===== LOAD FILES ===== */
+async function loadIECFiles(){
+  const res = await fetch('/files'); // Endpoint returning [{name,path,category}]
+  allFiles = await res.json();
+  renderFiles();
+}
+
+function renderFiles(){
+  iecFiles.innerHTML='';
+  const t=typeFilter.value, c=categoryFilter.value;
+
+  allFiles.filter(f=>{
+    let ok=true;
+    if(t==='image') ok=/\.(jpg|png|jpeg|gif)$/i.test(f.name);
+    if(t==='video') ok=/\.(mp4|webm)$/i.test(f.name);
+    if(t==='pdf') ok=f.name.endsWith('.pdf');
+    if(t==='text') ok=f.name.endsWith('.txt');
+    return ok && (c==='all'||f.category===c);
+  }).forEach(f=>{
+    const li=document.createElement('li');
+    li.innerHTML=`
+      <div class="file-title">${f.name}</div>
+      <div class="file-buttons">
+        <button onclick='openViewer(${JSON.stringify(f)})'>View</button>
+        <a href="${f.path}" download>Download</a>
+      </div>`;
+    iecFiles.append(li);
+  });
+}
+
+/* ===== VIEWER ===== */
+async function openViewer(file){
+  viewerContent.innerHTML='';
+  textLayer.innerHTML='<em>👉 I-highlight ang bahagi ng teksto na nais pakinggan.</em>';
+  extractedText='';
+
+  if(/\.(jpg|png|jpeg|gif)$/i.test(file.name)){
+    viewerContent.innerHTML=`<img id="ocrImage" src="${file.path}">`;
+    textLayer.textContent='Processing OCR...';
+    // OCR Image to text
+    Tesseract.recognize(file.path,'eng+fil').then(({data:{text}})=>{
+      extractedText=text || 'Walang nakuhang teksto.';
+      textLayer.textContent=extractedText;
+    });
+  }
+  else if(/\.(mp4|webm)$/i.test(file.name)){
+    viewerContent.innerHTML=`<video src="${file.path}" controls></video>`;
+    extractedText='Bidyo tungkol sa '+file.name;
+    textLayer.textContent=extractedText;
+  }
+  else if(file.name.endsWith('.txt')){
+    viewerContent.innerHTML=`<iframe src="${file.path}" height="400"></iframe>`;
+    extractedText = await fetch(file.path).then(r=>r.text());
+    textLayer.textContent=extractedText;
+  }
+  else if(file.name.endsWith('.pdf')){
+    viewerContent.innerHTML=`<iframe src="${file.path}" height="450"></iframe>`;
+    const pdf = await pdfjsLib.getDocument(file.path).promise;
+    let t='';
+    for(let i=1;i<=pdf.numPages;i++){
+      const p = await pdf.getPage(i);
+      const c = await p.getTextContent();
+      t += c.items.map(x=>x.str).join(' ')+'\n\n';
+    }
+    extractedText=t;
+    textLayer.textContent=extractedText;
+  }
+
+  viewerModal.style.display='flex';
+}
+
+/* ===== CLOSE VIEWER ===== */
+function closeViewer(){ stopTTS(); viewerModal.style.display='none'; }
+viewerModal.addEventListener('click', e=>{ if(e.target===viewerModal) closeViewer(); });
+
+/* ===== TTS ===== */
+function speak(text){
+  stopTTS();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang='fil-PH';
+  const v = voices.find(v=>v.lang==='fil-PH'||v.lang==='tl-PH');
+  if(v) u.voice=v;
+  u.rate=0.95;
+  synth.speak(u);
+}
+
+function readSelected(){
+  const s = window.getSelection().toString().trim();
+  if(!s) return alert('Mag-highlight ng teksto sa ibaba.');
+  speak(s);
+}
+
+function readAll(){
+  if(extractedText) speak(extractedText);
+}
+
+function stopTTS(){ if(synth.speaking) synth.cancel(); }
+
+/* ===== EVENTS ===== */
+typeFilter.onchange=renderFiles;
+categoryFilter.onchange=renderFiles;
+
+/* ===== INIT ===== */
+loadIECFiles();
+</script>
+
+</body>
+</html>
